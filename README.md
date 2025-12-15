@@ -59,14 +59,32 @@ Projeto de leitura de tags NFC NTAG213 e NTAG215 usando o módulo MFRC522 com o 
 
 ## 🎯 Suporte Multi-Board
 
-Este projeto suporta **duas placas** com configuração automática de pinagem:
+Este projeto suporta **três placas** com configuração automática de pinagem:
 
-| Ambiente | Placa | Pinagem | Dificuldade |
-|----------|-------|---------|-------------|
-| **esp32s3-lcd** | ESP32-S3-Touch-LCD-2.1 | GPIO3,4,5,42,0 | 🔴 Alta (requer soldagem) |
-| **esp32-wroom** | ESP32-WROOM Genérico | GPIO5,18,19,22,23 | 🟢 Fácil (jumpers) |
+| Ambiente | Placa | Pinagem | Display | Dificuldade |
+|----------|-------|---------|---------|-------------|
+| **esp32-wroom** | ESP32-WROOM Genérico | GPIO5,18,19,22,23 | ❌ Não | 🟢 Fácil (jumpers) |
+| **esp32s3-lcd** | ESP32-S3-Touch-LCD-2.1 | GPIO3,4,5,42,0 | ✅ 2.1" 480×480 | 🔴 Alta (soldagem) |
+| **esp32-cyd** | ESP32-2432S028R (CYD) 🆕 | GPIO5,18,19,23,27 | ✅ 2.8" 320×240 | 🟡 Média (soldagem ou I2C bridge) |
 
-**📖 Guia completo**: [MULTI_BOARD_GUIDE.md](MULTI_BOARD_GUIDE.md)
+**📖 Guias completos**: 
+- [MULTI_BOARD_GUIDE.md](MULTI_BOARD_GUIDE.md) - ESP32-WROOM e ESP32-S3-LCD
+- [CYD_ESP32-2432S028R_ANALYSIS.md](CYD_ESP32-2432S028R_ANALYSIS.md) - 🆕 Análise completa do CYD
+- [CYD_WIRING_SOLUTIONS.md](CYD_WIRING_SOLUTIONS.md) - 🆕 3 soluções de conexão
+
+### 🔗 Arquitetura Dual ESP32 (RECOMENDADA!) ⭐
+
+**Nova opção**: Use o **CYD apenas como display** e um **ESP32 externo** para o MFRC522!
+
+| Vantagem | Descrição |
+|----------|-----------|
+| ❌ **Sem Soldagem** | CYD mantém-se intacto |
+| ✅ **Modular** | Componentes independentes |
+| ✅ **Fácil Debug** | Dois Serial Monitors |
+| 💰 **Custo** | CYD ($12) + ESP32-DevKit ($5) = $17 |
+
+**Comunicação**: UART (GPIO 22, 27) ou I2C  
+**📖 Guia completo**: [CYD_DUAL_ESP32_ARCHITECTURE.md](CYD_DUAL_ESP32_ARCHITECTURE.md) - 🆕 Arquitetura Dual ESP32
 
 ---
 
@@ -268,8 +286,10 @@ RFID Reader/
 ├── include/                        # Headers (vazio por padrão)
 ├── lib/                            # Bibliotecas locais (vazio)
 ├── platformio.ini                  # Configuração multi-board
-├── NDEF_PROTOCOL.md                # 📚 Parser NDEF e protocolo (NOVO!)
-├── MULTI_BOARD_GUIDE.md            # 🎯 Guia multi-board
+├── NDEF_PROTOCOL.md                # 📚 Parser NDEF e protocolo
+├── MULTI_BOARD_GUIDE.md            # 🎯 Guia multi-board (WROOM + S3-LCD)
+├── CYD_ESP32-2432S028R_ANALYSIS.md # 🆕 Análise completa do CYD
+├── CYD_WIRING_SOLUTIONS.md         # 🆕 Soluções de conexão CYD + MFRC522
 ├── TAG_READING_OUTPUT.md           # 📊 Exemplo de leitura completa
 ├── SOLUTION_FINAL.md               # ⭐ Guia ESP32-S3-LCD completo
 ├── GPIO_ANALYSIS_FULL.md           # 📊 Análise técnica completa
