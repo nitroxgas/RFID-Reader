@@ -52,6 +52,11 @@ Projeto de leitura de tags NFC NTAG213 e NTAG215 usando o módulo MFRC522 com o 
   - Estatísticas resumidas (bytes, tipo de conteúdo)
   - URL/Texto extraído em destaque
   - Sem dados hexadecimais ou strings brutas
+- ✅ **Comunicação UART** (Serial1):
+  - Envia TAG_ID e conteúdo NDEF automaticamente
+  - Protocolo estruturado: `TAG|UID|URL|TEXT|TYPE\n`
+  - GPIO 17 (TX) e GPIO 16 (RX) para ESP32-WROOM
+  - Pronto para integração com display externo
 - ✅ Debounce para evitar leituras duplicadas
 - ✅ Diagnóstico de erros de comunicação SPI
 - ✅ Monitor serial detalhado (115200 baud)
@@ -282,22 +287,26 @@ Pronto para próxima leitura...
 ```
 RFID Reader/
 ├── src/
-│   └── main.cpp                    # Código multi-board (auto-detect)
-├── include/                        # Headers (vazio por padrão)
-├── lib/                            # Bibliotecas locais (vazio)
-├── platformio.ini                  # Configuração multi-board
-├── NDEF_PROTOCOL.md                # 📚 Parser NDEF e protocolo
-├── MULTI_BOARD_GUIDE.md            # 🎯 Guia multi-board (WROOM + S3-LCD)
-├── CYD_ESP32-2432S028R_ANALYSIS.md # 🆕 Análise completa do CYD
-├── CYD_WIRING_SOLUTIONS.md         # 🆕 Soluções de conexão CYD + MFRC522
-├── TAG_READING_OUTPUT.md           # 📊 Exemplo de leitura completa
-├── SOLUTION_FINAL.md               # ⭐ Guia ESP32-S3-LCD completo
-├── GPIO_ANALYSIS_FULL.md           # 📊 Análise técnica completa
-├── CONNECTOR_PINOUT_REAL.md        # 🔌 Pinagem dos conectores J9/J8/J10
-├── QUICK_REFERENCE.md              # 🚀 Guia rápido (legado)
-├── WIRING_DIAGRAM.md               # Diagrama (legado)
-├── PINOUT_CONNECTORS.md            # (DESATUALIZADO)
-└── README.md                       # Este arquivo
+│   └── main.cpp                       # Código ESP32-WROOM com UART ✅
+├── common/                            # 🆕 Código compartilhado
+│   └── protocol.h                     # 🆕 Protocolo UART
+├── include/                           # Headers (vazio por padrão)
+├── lib/                               # Bibliotecas locais (vazio)
+├── platformio.ini                     # Configuração multi-board
+├── NDEF_PROTOCOL.md                   # 📚 Parser NDEF e protocolo
+├── MULTI_BOARD_GUIDE.md               # 🎯 Guia multi-board (WROOM + S3-LCD)
+├── CYD_ESP32-2432S028R_ANALYSIS.md    # 🆕 Análise completa do CYD
+├── CYD_WIRING_SOLUTIONS.md            # 🆕 Soluções de conexão CYD + MFRC522
+├── CYD_DUAL_ESP32_ARCHITECTURE.md     # 🆕 Arquitetura Dual ESP32
+├── DUAL_ESP32_PROJECT_STRATEGY.md     # 🆕 Estratégia de organização ⭐
+├── TAG_READING_OUTPUT.md              # 📊 Exemplo de leitura completa
+├── SOLUTION_FINAL.md                  # ⭐ Guia ESP32-S3-LCD completo
+├── GPIO_ANALYSIS_FULL.md              # 📊 Análise técnica completa
+├── CONNECTOR_PINOUT_REAL.md           # 🔌 Pinagem dos conectores J9/J8/J10
+├── QUICK_REFERENCE.md                 # 🚀 Guia rápido (legado)
+├── WIRING_DIAGRAM.md                  # Diagrama (legado)
+├── PINOUT_CONNECTORS.md               # (DESATUALIZADO)
+└── README.md                          # Este arquivo
 ```
 
 ## ⚠️ Conclusão da Análise de Pinagem

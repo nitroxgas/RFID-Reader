@@ -33,6 +33,11 @@
   #define SCK_PIN   18   // GPIO18 (padrão VSPI)
   #define MISO_PIN  19   // GPIO19 (padrão VSPI)
   #define MOSI_PIN  23   // GPIO23 (padrão VSPI)
+  
+  // UART para comunicação com display (Serial1)
+  #define UART1_TX_PIN  17   // GPIO17 (TX para display)
+  #define UART1_RX_PIN  16   // GPIO16 (RX do display)
+  
   #define BOARD_NAME "ESP32-WROOM"
   
 #else
@@ -57,6 +62,13 @@ MFRC522 mfrc522(SS_PIN, RST_PIN);
 unsigned long lastCardReadTime = 0;
 const unsigned long CARD_READ_DELAY = 2000; // 2 segundos entre leituras da mesma tag
 
+// Habilita/desabilita comunicação UART com display externo
+#ifdef UART1_TX_PIN
+  #define ENABLE_UART_DISPLAY true
+#else
+  #define ENABLE_UART_DISPLAY false
+#endif
+
 // ============================================
 // FUNÇÕES AUXILIARES
 // ============================================
@@ -72,6 +84,38 @@ String bytesToHexString(byte *buffer, byte bufferSize) {
   }
   hexString.toUpperCase();
   return hexString;
+}
+
+/**
+ * Envia dados da tag para display externo via UART (Serial1)
+ * Protocolo: TAG|UID|URL|TEXT|TYPE\n
+ */
+void sendToDisplay(String uid, String url, String text, int contentType) {
+  #if ENABLE_UART_DISPLAY
+    String message = "TAG|" + uid + "|";
+    
+    // URL (se houver)
+    if (url.length() > 0) {
+      message += url;
+    }
+    message += "|";
+    
+    // Texto (se houver)
+    if (text.length() > 0) {
+      message += text;
+    }
+    message += "|";
+    
+    // Tipo: 0=bruto, 1=URL, 2=Texto
+    message += String(contentType);
+    
+    // Envia via Serial1
+    Serial1.println(message);
+    
+    // Debug no Serial0
+    Serial.print("📤 Enviado para display: ");
+    Serial.println(message);
+  #endif
 }
 
 /**
@@ -351,7 +395,7 @@ String extractNDEFText(byte* data, int dataSize) {
 /**
  * Lê todos os dados do usuário da tag NTAG
  */
-void readAllNTAGData(int ntagType) {
+void readAllNTAGData(int ntagType, String tagUID) {
   if (ntagType == 0) {
     Serial.println("⚠️ Tipo NTAG desconhecido, não é possível ler dados.");
     return;
@@ -470,6 +514,18 @@ void readAllNTAGData(int ntagType) {
   
   Serial.println();
   
+  // ========================================
+  // ENVIA DADOS PARA DISPLAY EXTERNO VIA UART
+  // ========================================
+  int contentType = 0; // 0=bruto, 1=URL, 2=Texto
+  if (ndefUrl.length() > 0) {
+    contentType = 1;
+  } else if (ndefText.length() > 0) {
+    contentType = 2;
+  }
+  
+  sendToDisplay(tagUID, ndefUrl, ndefText, contentType);
+  
   delete[] allData;
 }
 
@@ -503,10 +559,15 @@ void displayCardInfo() {
     Serial.println(getNTAGTypeName(ntagType));
     Serial.println("========================================\n");
     
-    // Lê TODOS os dados da tag
-    readAllNTAGData(ntagType);
+    // Lê TODOS os dados da tag (passando UID)
+    readAllNTAGData(ntagType, uid);
   } else {
     Serial.println("========================================\n");
+    
+    // Para outras tags, envia apenas o UID
+    #if ENABLE_UART_DISPLAY
+      sendToDisplay(uid, "", "", 0);
+    #endif
   }
 }
 
@@ -514,9 +575,16 @@ void displayCardInfo() {
 // CONFIGURAÇÃO INICIAL
 // ============================================
 void setup() {
-  // Inicializa comunicação serial
+  // Inicializa comunicação serial (debug)
   Serial.begin(115200);
   while (!Serial); // Aguarda porta serial abrir (necessário para USB CDC)
+  
+  // Inicializa Serial1 (UART para display externo)
+  #if ENABLE_UART_DISPLAY
+    Serial1.begin(115200, SERIAL_8N1, UART1_RX_PIN, UART1_TX_PIN);
+    delay(100);
+    Serial1.println("STATUS|READER_READY");
+  #endif
   
   delay(1000);
   
@@ -532,6 +600,17 @@ void setup() {
   
   // Configura pinos SPI customizados
   SPI.begin(SCK_PIN, MISO_PIN, MOSI_PIN, SS_PIN);
+  
+  // Informa sobre UART se habilitado
+  #if ENABLE_UART_DISPLAY
+    Serial.println("🔗 Comunicação UART habilitada:");
+    Serial.print("   TX: GPIO");
+    Serial.println(UART1_TX_PIN);
+    Serial.print("   RX: GPIO");
+    Serial.println(UART1_RX_PIN);
+    Serial.println("   Baud: 115200");
+    Serial.println();
+  #endif
   
   // Inicializa MFRC522
   mfrc522.PCD_Init();

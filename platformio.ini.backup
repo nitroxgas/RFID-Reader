@@ -1,0 +1,59 @@
+; PlatformIO Project Configuration File
+;
+;   Build options: build flags, source filter
+;   Upload options: custom upload port, speed and extra flags
+;   Library options: dependencies, extra library storages
+;   Advanced options: extra scripting
+;
+; Please visit documentation for the other options and examples
+; https://docs.platformio.org/page/projectconf.html
+
+[env]
+
+; ============================================
+; Ambiente 1: ESP32-S3-Touch-LCD-2.1 (Waveshare)
+; - Requer soldagem em GPIO3, 4, 5
+; - Usa GPIO42 (SD_MISO)
+; - GPIO0 com pull-up 10kΩ
+; ============================================
+[env:esp32s3-lcd]
+platform = espressif32
+board = esp32-s3-devkitc-1
+framework = arduino
+monitor_speed = 115200
+upload_speed = 921600
+board_build.flash_mode = qio
+board_build.f_flash = 80000000L
+board_build.f_cpu = 240000000L
+board_build.partitions = default_16MB.csv
+
+lib_deps = 
+	miguelbalboa/MFRC522 @ ^1.4.12
+	adafruit/Adafruit GFX Library @ ^1.11.9
+	bodmer/TFT_eSPI @ ^2.5.43
+
+build_flags = 
+	-DCORE_DEBUG_LEVEL=3
+	-DBOARD_HAS_PSRAM
+	-DARDUINO_USB_CDC_ON_BOOT=1
+	-DBOARD_ESP32S3_LCD=1
+
+; ============================================
+; Ambiente 2: ESP32-WROOM (Genérico)
+; - Pinagem padrão SPI (fácil de conectar)
+; - Ideal para testes iniciais
+; - Não requer soldagem
+; ============================================
+[env:esp32-wroom]
+platform = espressif32
+board = esp32dev
+framework = arduino
+monitor_speed = 115200
+upload_speed = 921600
+
+lib_deps = 
+	miguelbalboa/MFRC522 @ ^1.4.12
+
+build_flags = 
+	-DCORE_DEBUG_LEVEL=3
+	-DBOARD_ESP32_WROOM=1
