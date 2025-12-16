@@ -19,7 +19,7 @@
 #define DEFAULT_MAINCOLOR TFT_WHITE
 
 // Mood and position defines (same as original)
-#define DEFAULT   0
+#define DEFAULTE   0
 #define TIRED     1
 #define ANGRY     2
 #define HAPPY     3
@@ -46,7 +46,7 @@ class TFT_RoboEyes {
     TFT_eSprite *sprite;
 
     // Display configuration – you can update these via setScreenSize()
-    int screenWidth = 240;   // effective width (set by user)
+    int screenWidth = 249;   // effective width (set by user)
     int screenHeight = 320;  // effective height (set by user)
     uint16_t bgColor;        // background color for drawing overlays
     uint16_t mainColor;      // color for the eyes
@@ -135,9 +135,9 @@ class TFT_RoboEyes {
 
       // Handle orientation
       if (!portrait) {
-        screenWidth = 240;  // CYD landscape width
-        screenHeight = 320; // CYD landscape height
-        // Rotação será definida externamente
+        screenWidth = 240;
+        screenHeight = 320;
+        tft->setRotation(rotations);
       }
 
       // Set default colors
@@ -222,13 +222,9 @@ class TFT_RoboEyes {
     void begin(byte frameRate = 50) {
       // Allocate and create the sprite (off-screen buffer)
       sprite = new TFT_eSprite(tft);
-      sprite->setColorDepth(16);  // 16-bit color para compatibilidade
-      
-      // Cria sprite com dimensões corretas
-      if (sprite->createSprite(screenWidth, screenHeight)) {
-        sprite->fillSprite(bgColor);  // Preenche com fundo preto
-        sprite->setSwapBytes(true);   // Mesmo swap do TFT
-      }
+      sprite->setColorDepth(8);
+      sprite->createSprite(screenWidth, screenHeight);
+      sprite->fillSprite(bgColor);
 
       eyeLheightCurrent = 1;
       eyeRheightCurrent = 1;
@@ -266,10 +262,7 @@ class TFT_RoboEyes {
       // Recreate sprite with new dimensions
       if(sprite) {
         sprite->deleteSprite();
-        if (sprite->createSprite(screenWidth, screenHeight)) {
-          sprite->fillSprite(bgColor);
-          sprite->setSwapBytes(true);
-        }
+        sprite->createSprite(screenWidth, screenHeight);
       }
     }
 
