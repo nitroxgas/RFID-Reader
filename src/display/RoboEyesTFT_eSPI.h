@@ -135,9 +135,9 @@ class TFT_RoboEyes {
 
       // Handle orientation
       if (!portrait) {
-        screenWidth = 240;
-        screenHeight = 320;
-        tft->setRotation(rotations);
+        screenWidth = 240;  // CYD landscape width
+        screenHeight = 320; // CYD landscape height
+        // Rotação será definida externamente
       }
 
       // Set default colors
@@ -222,9 +222,13 @@ class TFT_RoboEyes {
     void begin(byte frameRate = 50) {
       // Allocate and create the sprite (off-screen buffer)
       sprite = new TFT_eSprite(tft);
-      sprite->setColorDepth(8);
-      sprite->createSprite(screenWidth, screenHeight);
-      sprite->fillSprite(bgColor);
+      sprite->setColorDepth(16);  // 16-bit color para compatibilidade
+      
+      // Cria sprite com dimensões corretas
+      if (sprite->createSprite(screenWidth, screenHeight)) {
+        sprite->fillSprite(bgColor);  // Preenche com fundo preto
+        sprite->setSwapBytes(true);   // Mesmo swap do TFT
+      }
 
       eyeLheightCurrent = 1;
       eyeRheightCurrent = 1;
@@ -262,7 +266,10 @@ class TFT_RoboEyes {
       // Recreate sprite with new dimensions
       if(sprite) {
         sprite->deleteSprite();
-        sprite->createSprite(screenWidth, screenHeight);
+        if (sprite->createSprite(screenWidth, screenHeight)) {
+          sprite->fillSprite(bgColor);
+          sprite->setSwapBytes(true);
+        }
       }
     }
 

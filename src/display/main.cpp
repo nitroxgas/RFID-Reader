@@ -1,7 +1,9 @@
 #include <Arduino.h>
-#include <lvgl.h>
 #include <TFT_eSPI.h>
-#include "RoboEyesTFT_eSPI.h"
+// #include "RoboEyesTFT_eSPI.h"  // TEMPORARIAMENTE DESABILITADO para debug
+
+// LVGL será incluído apenas sob demanda
+//#include <lvgl.h>
 
 // Inclui protocolo compartilhado
 #include "../common/protocol.h"
@@ -21,13 +23,13 @@
 // Display
 TFT_eSPI tft = TFT_eSPI();
 
-// Create a RoboEyes instance (false = landscape, rotação 1)
-TFT_RoboEyes roboEyes(tft, false, 1);
+// RoboEyes TEMPORARIAMENTE DESABILITADO para debug
+// TFT_RoboEyes roboEyes(tft, false, 1);
 
-// LVGL Display Buffer
-static lv_disp_draw_buf_t draw_buf;
-static lv_color_t buf1[TFT_WIDTH * 20];  // Buffer 1
-static lv_color_t buf2[TFT_WIDTH * 20];  // Buffer 2 (double buffering)
+// LVGL Display Buffer (serão alocados sob demanda)
+/* static lv_disp_draw_buf_t draw_buf;
+static lv_color_t *buf1 = NULL;
+static lv_color_t *buf2 = NULL; */
 
 // Display Mode States
 enum DisplayMode {
@@ -46,19 +48,67 @@ String currentText = "";
 ContentType currentType = CONTENT_RAW;
 
 // QR Code variables
-lv_obj_t *qr_code = NULL;
+/* lv_obj_t *qr_code = NULL;
 lv_obj_t *panel_qr = NULL;
-lv_obj_t *qr_screen = NULL;
+lv_obj_t *qr_screen = NULL; */
 unsigned long qrCodeShowTime = 0;
 const unsigned long QR_CODE_TIMEOUT = 180000;  // 3 minutos em ms
+
+// ============================================
+// ANIMAÇÃO SIMPLES DE TESTE (SEM SPRITE)
+// ============================================
+
+int eyeSize = 80;
+int eyeY = 0;        // Será calculado
+int eyeLeftX = 0;    // Será calculado
+int eyeRightX = 0;   // Será calculado
+bool eyesOpen = true;
+unsigned long lastBlink = 0;
+
+void updateEyePositions() {
+  // Calcula posições baseado na resolução real
+  int w = tft.width();
+  int h = tft.height();
+  
+  if (w > h) {
+    // LANDSCAPE: olhos lado a lado (horizontal)
+    eyeY = h / 2;
+    eyeLeftX = w / 4;
+    eyeRightX = (3 * w) / 4;
+    Serial.printf("\n👀 Posições dos olhos LANDSCAPE (tela %dx%d):\n", w, h);
+    Serial.printf("  ├─ Olho esquerdo: (%d, %d)\n", eyeLeftX, eyeY);
+    Serial.printf("  ├─ Olho direito: (%d, %d)\n", eyeRightX, eyeY);
+  } else {
+    // PORTRAIT: olhos empilhados (vertical)
+    int centerX = w / 2;
+    eyeLeftX = centerX;
+    eyeRightX = centerX;
+    eyeY = h / 3;          // Olho superior em 1/3 da altura
+    int eyeBottomY = (2 * h) / 3; // Olho inferior em 2/3 da altura
+    
+    Serial.printf("\n👀 Posições dos olhos PORTRAIT (tela %dx%d):\n", w, h);
+    Serial.printf("  ├─ Olho superior: (%d, %d)\n", centerX, eyeY);
+    Serial.printf("  ├─ Olho inferior: (%d, %d)\n", centerX, eyeBottomY);
+    
+    // Para portrait, vamos desenhar olhos menores empilhados
+    eyeLeftX = centerX - 30;  // Esquerdo um pouco à esquerda
+    eyeRightX = centerX + 30; // Direito um pouco à direita
+    eyeY = h / 2;             // Centralizados verticalmente lado a lado
+  }
+  
+  Serial.printf("  └─ Tamanho: %d px\n\n", eyeSize);
+}
+
+void drawSimpleEyes();
 
 // ============================================
 // FUNÇÕES LVGL - Display Driver
 // ============================================
 
-/**
+ /**
  * Callback para flush do display
  */
+ /*
 void my_disp_flush(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color_p) {
   uint32_t w = (area->x2 - area->x1 + 1);
   uint32_t h = (area->y2 - area->y1 + 1);
@@ -70,17 +120,51 @@ void my_disp_flush(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color
   
   lv_disp_flush_ready(disp);
 }
-
+ */
 /**
  * Inicializa LVGL
  */
 void initLVGL() {
-  Serial.println("Inicializando LVGL...");
+  Serial.println("\n🔧 Inicializando LVGL...");
   
+  // DEBUG: Verifica defines
+/*   Serial.printf("  ├─ TFT_WIDTH: %d\n", TFT_WIDTH);
+  Serial.printf("  ├─ TFT_HEIGHT: %d\n", TFT_HEIGHT);
+  Serial.printf("  ├─ sizeof(lv_color_t): %d bytes\n", sizeof(lv_color_t)); */
+  /* 
   lv_init();
   
+  // Calcula tamanho do buffer (largura * linhas)
+  size_t bufferLines = 20;
+  size_t bufferSize = TFT_WIDTH * bufferLines * sizeof(lv_color_t);
+  
+  Serial.printf("  ├─ Alocando buffers: %d x %d linhas = %d pixels (%d bytes)\n", 
+                TFT_WIDTH, bufferLines, TFT_WIDTH * bufferLines, bufferSize);
+  
+  // Aloca buffers dinamicamente
+  if (buf1 == NULL) {
+    buf1 = (lv_color_t*)heap_caps_malloc(bufferSize, MALLOC_CAP_DMA);
+    if (buf1 == NULL) {
+      Serial.printf("❌ ERRO: Falha ao alocar buf1 (%d bytes)!\n", bufferSize);
+      Serial.printf("  └─ Heap livre: %d bytes\n", ESP.getFreeHeap());
+      return;
+    }
+    Serial.printf("  ├─ buf1 alocado em: %p\n", buf1);
+  }
+  
+  if (buf2 == NULL) {
+    buf2 = (lv_color_t*)heap_caps_malloc(bufferSize, MALLOC_CAP_DMA);
+    if (buf2 == NULL) {
+      Serial.printf("❌ ERRO: Falha ao alocar buf2 (%d bytes)!\n", bufferSize);
+      Serial.printf("  └─ Heap livre: %d bytes\n", ESP.getFreeHeap());
+      return;
+    }
+    Serial.printf("  ├─ buf2 alocado em: %p\n", buf2);
+  }
+  
   // Configura buffer duplo para melhor performance
-  lv_disp_draw_buf_init(&draw_buf, buf1, buf2, TFT_WIDTH * 20);
+  lv_disp_draw_buf_init(&draw_buf, buf1, buf2, TFT_WIDTH * bufferLines);
+  Serial.printf("  ├─ draw_buf inicializado: %d pixels\n", TFT_WIDTH * bufferLines);
   
   // Registra driver do display
   static lv_disp_drv_t disp_drv;
@@ -89,9 +173,11 @@ void initLVGL() {
   disp_drv.flush_cb = my_disp_flush;
   disp_drv.hor_res = TFT_WIDTH;
   disp_drv.ver_res = TFT_HEIGHT;
-  lv_disp_drv_register(&disp_drv);
+  lv_disp_drv_register(&disp_drv); */
   
-  Serial.println("LVGL inicializado!");
+ /*  Serial.printf("  ├─ Display driver: %dx%d\n", disp_drv.hor_res, disp_drv.ver_res);
+  Serial.printf("  └─ Heap livre após LVGL: %d bytes\n", ESP.getFreeHeap());
+  Serial.println("✅ LVGL inicializado com sucesso!\n"); */
 }
 
 // ============================================
@@ -168,7 +254,7 @@ void createQRCodeScreen() {
   Serial.println("📱 Criando tela de QR Code...");
   
   // Cria tela preta para QR Code
-  qr_screen = lv_obj_create(NULL);
+  /* qr_screen = lv_obj_create(NULL);
   lv_obj_set_style_bg_color(qr_screen, lv_color_black(), 0);
   
   // Panel branco para QR Code centralizado
@@ -184,19 +270,19 @@ void createQRCodeScreen() {
   // QR Code 200x200
   qr_code = lv_qrcode_create(panel_qr, 200, lv_color_black(), lv_color_white());
   lv_obj_center(qr_code);
-  
+   */
   Serial.println("✅ Tela QR Code criada!");
 }
 
 /**
- * Alterna para modo RoboEyes
+ * Alterna para modo RoboEyes (TEMPORARIAMENTE SEM ROBOEYES)
  */
 void switchToEyesMode() {
-  Serial.println("👀 Alternando para modo RoboEyes...");
+  Serial.println("👀 Alternando para modo Eyes...");
   currentMode = EYES_MODE;
-  roboEyes.open();
+  // roboEyes.open();  // DESABILITADO
   tft.fillScreen(TFT_BLACK);
-  Serial.println("✅ Modo RoboEyes ativo!");
+  Serial.println("✅ Modo Eyes ativo!");
 }
 
 /**
@@ -204,7 +290,7 @@ void switchToEyesMode() {
  */
 void switchToQRCodeMode(const String& url) {
   Serial.println("📱 Alternando para modo QR Code...");
-  currentMode = QRCODE_MODE;
+ /*  currentMode = QRCODE_MODE;
   
   // Cria tela se não existir
   if (qr_screen == NULL) {
@@ -218,7 +304,7 @@ void switchToQRCodeMode(const String& url) {
   lv_scr_load(qr_screen);
   
   // Registra tempo
-  qrCodeShowTime = millis();
+  qrCodeShowTime = millis(); */
   
   Serial.println("✅ QR Code exibido (timeout: 3 min)");
 }
@@ -417,57 +503,104 @@ void setup() {
   digitalWrite(TFT_BL, HIGH);  // Liga backlight 100%
   delay(100);
   
-  tft.begin();
-  tft.setRotation(1);  // Landscape 320x240 (rotação 1)
-  tft.invertDisplay(false);
-  tft.setSwapBytes(true);  // Swap para cores corretas
+  // Inicializa TFT (mínimo necessário)
+  Serial.println("  ↓ Inicializando SPI e TFT...");
   
-  // Teste do display - preencher tela
-  Serial.println("  ↓ Teste: Preenchendo tela com vermelho...");
+  
+  // CRÍTICO: Define rotação ANTES de qualquer desenho!
+  Serial.println("  ↓ Configurando LANDSCAPE (rotação 1)...");
+
+  tft.init();
+  tft.invertDisplay(true);
+  tft.setRotation(0);    
+  tft.setSwapBytes(true); // Swap the colour byte order when rendering
+  
+    tft.writecommand(ILI9341_GAMMASET);
+    tft.writedata(2);
+    delay(120);
+    tft.writecommand(ILI9341_GAMMASET); //Gamma curve selected
+    tft.writedata(1); 
+  
+
+  Serial.printf("  ↓ Resolução: %dx%d (rotação %d)\n", tft.width(), tft.height(), tft.getRotation());
+  
+  Serial.println("  ↓ Teste SIMPLES: Vermelho...");
   tft.fillScreen(TFT_RED);
-  delay(300);
+  delay(1000);
   
-  Serial.println("  ↓ Teste: Preenchendo tela com verde...");
+  Serial.println("  ↓ Verde...");
   tft.fillScreen(TFT_GREEN);
-  delay(300);
+  delay(1000);
   
-  Serial.println("  ↓ Teste: Preenchendo tela com azul...");
+  Serial.println("  ↓ Azul...");
   tft.fillScreen(TFT_BLUE);
-  delay(300);
+  delay(1000);
   
-  Serial.println("  ↓ Teste: Tela preta...");
+  Serial.println("  ↓ Branco...");
+  tft.fillScreen(TFT_WHITE);
+  delay(1000);
+  
+  Serial.println("  ↓ Preto...");
   tft.fillScreen(TFT_BLACK);
-  delay(200);
+  delay(500);
   
-  Serial.println("✅ TFT Display inicializado!");
+  // Testa rotações
+  Serial.println("\n  ↓ Testando rotações:");
   
-  // Inicializa RoboEyes para tela 320x240
-  Serial.println("👀 Inicializando RoboEyes...");
-  roboEyes.setScreenSize(320, 240);  // Define tamanho da tela
-  roboEyes.begin(50);  // 50 FPS
+    tft.setRotation(1);
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(TFT_WHITE);
+    tft.setTextSize(3);
+    tft.setCursor(20, 20);
+    tft.printf("ROT %d", 1);
+    tft.setCursor(20, 60);
+    tft.printf("%d x %d", tft.width(), tft.height());
+    
   
-  // Customiza olhos para ocupar boa parte da tela
-  roboEyes.setColors(TFT_WHITE, TFT_BLACK);  // Olhos brancos, fundo preto
-  roboEyes.setWidth(100, 100);   // Largura dos olhos
-  roboEyes.setHeight(100, 100);  // Altura dos olhos
-  roboEyes.setBorderradius(15, 15);  // Bordas arredondadas
-  roboEyes.setSpacebetween(20);  // Espaço entre olhos
+  // Restaura rotação 1 (LANDSCAPE 320x240) após testes
+  // tft.setRotation(1);
+  Serial.printf("\n✅ Rotação restaurada para LANDSCAPE: %dx%d\n", tft.width(), tft.height());
   
-  // Animações
-  roboEyes.setAutoblinker(true, 3, 2);  // Piscar automático
-  roboEyes.setIdleMode(true, 5, 3);     // Movimento idle (olhar ao redor)
-  roboEyes.open();  // Abre os olhos
+  // Desenha círculos de teste (landscape: lado a lado horizontalmente)
+  Serial.println("\n  ↓ Desenhando círculos de teste...");
+  tft.fillScreen(TFT_BLACK);
+  tft.fillCircle(80, 120, 40, TFT_RED);    // Esquerda
+  tft.fillCircle(240, 120, 40, TFT_GREEN); // Direita
+  delay(2000);
   
-  Serial.println("✅ RoboEyes inicializado!");
-  Serial.println("  └─ Dimensões: 320x240");
-  Serial.println("  └─ Olhos: 100x100 cada");
+  Serial.println("\n✅ TFT Display inicializado!");
+  Serial.printf("  ├─ Resolução: %dx%d\n", tft.width(), tft.height());
+  Serial.printf("  ├─ Rotação: %d\n", tft.getRotation());
+  Serial.printf("  └─ Heap livre: %d bytes\n", ESP.getFreeHeap());
   
-  // LVGL será inicializado sob demanda quando precisar do QR Code
+  // Calcula posições e desenha olhos
+  Serial.println("\n👀 Desenhando olhos...");
+  updateEyePositions();
+  drawSimpleEyes();
+  Serial.println("✅ Olhos desenhados! Piscarão a cada 3s");
   
-  Serial.println();
-  Serial.println("✅ Sistema pronto!");
-  Serial.println("⏳ Aguardando dados do Reader via UART...");
-  Serial.println();
+  Serial.println("\n✅ Sistema pronto!");
+  Serial.println("⏳ Aguardando dados do Reader via UART...\n");
+}
+
+// ============================================
+// ANIMAÇÃO SIMPLES DE TESTE (SEM SPRITE)
+// ============================================
+
+void drawSimpleEyes() {
+  // Limpa área dos olhos
+  tft.fillCircle(eyeLeftX, eyeY, eyeSize/2 + 5, TFT_BLACK);
+  tft.fillCircle(eyeRightX, eyeY, eyeSize/2 + 5, TFT_BLACK);
+  
+  if (eyesOpen) {
+    // Desenha olhos abertos (círculos brancos)
+    tft.fillCircle(eyeLeftX, eyeY, eyeSize/2, TFT_WHITE);
+    tft.fillCircle(eyeRightX, eyeY, eyeSize/2, TFT_WHITE);
+  } else {
+    // Desenha olhos fechados (linhas horizontais)
+    tft.fillRect(eyeLeftX - eyeSize/2, eyeY - 2, eyeSize, 4, TFT_WHITE);
+    tft.fillRect(eyeRightX - eyeSize/2, eyeY - 2, eyeSize, 4, TFT_WHITE);
+  }
 }
 
 // ============================================
@@ -486,14 +619,21 @@ void loop() {
   
   // Atualiza display baseado no modo atual
   if (currentMode == EYES_MODE) {
-    // Modo RoboEyes: atualiza animação dos olhos
-    roboEyes.update();
-    delay(5);
+    // Animação simples de piscar (sem sprite)
+    if (millis() - lastBlink > 3000) {
+      eyesOpen = !eyesOpen;
+      drawSimpleEyes();
+      delay(200);
+      eyesOpen = !eyesOpen;
+      drawSimpleEyes();
+      lastBlink = millis();
+    }
+    delay(10);
     
   } else if (currentMode == QRCODE_MODE) {
     // Modo QR Code: processa LVGL
-    lv_timer_handler();
-    lv_tick_inc(5);
+    /* lv_timer_handler();
+    lv_tick_inc(5); */
     delay(5);
   }
 }

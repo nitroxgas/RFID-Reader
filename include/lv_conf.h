@@ -23,7 +23,7 @@
 #define LV_MEM_SIZE (64U * 1024U)  // 64KB
 
 // ============================================
-// DISPLAY
+// DISPLAY (LANDSCAPE 320x240)
 // ============================================
 #define LV_HOR_RES_MAX 320
 #define LV_VER_RES_MAX 240
