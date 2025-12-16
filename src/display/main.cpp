@@ -1,6 +1,8 @@
 #include <Arduino.h>
 #include <TFT_eSPI.h>
 #include "RoboEyesTFT_eSPI.h"
+#include <TFT_eTouch.h>
+#include <SPI.h>
 
 // LVGL para QR Code
 #include <lvgl.h>
@@ -17,11 +19,30 @@
 #define UART_RX_PIN  27  // GPIO27 (CN1 Pin 3) <- Reader TX (GPIO17)
 #define UART_TX_PIN  22  // GPIO22 (CN1 Pin 2) -> Reader RX (GPIO16)
 
+// Pinos SPI para SD Card
+#define SDSPI_CS    5
+#define SDSPI_CLK   18
+#define SDSPI_MOSI  23
+#define SDSPI_MISO  19
+
 // Pino Backlight do Display (CRÍTICO!)
 #define TFT_BL  21       // GPIO21 - Backlight PWM
 
+// Pinos Touch (CYD) - 4-wire resistivo
+/* #define ETOUCH_CS    33
+#define TOUCH_IRQ   36
+#define TOUCH_MOSI  32
+#define TOUCH_MISO  39
+#define TOUCH_CLK   25 */
+
 // Display
 TFT_eSPI tft = TFT_eSPI();
+
+// Touchscreen TFT_eTouch (mais estável)
+// TFT_eTouch touch(TOUCH_CS, TOUCH_IRQ, TOUCH_MOSI, TOUCH_MISO, TOUCH_CLK);
+
+SPIClass hSPI(HSPI);
+TFT_eTouch<TFT_eSPI> touch(tft, ETOUCH_CS, 0xFF, hSPI); 
 
 // RoboEyes (portrait mode: 240x320)
 TFT_RoboEyes roboEyes(tft, true, 1);
@@ -56,9 +77,15 @@ const unsigned long QR_CODE_TIMEOUT = 120000;  // 2 minutos em ms
 
 // Mood change variables
 unsigned long lastMoodChange = 0;
-const unsigned long MOOD_CHANGE_INTERVAL = 60000;  // 1 minuto
+const unsigned long MOOD_CHANGE_INTERVAL = 30000;  // 1 minuto
 const uint8_t MOODS[] = {0, TIRED, ANGRY, HAPPY};  // 0 = DEFAULT
 const int NUM_MOODS = 4;
+
+// Touch variables
+bool touchEnabled = false;
+unsigned long lastTouchTime = 0;
+const unsigned long TOUCH_DEBOUNCE = 300;  // 300ms debounce
+bool touchProcessing = false;  // Flag para evitar múltiplas leituras
 
 
 // ============================================
@@ -301,6 +328,55 @@ void changeRandomMood() {
 }
 
 // ============================================
+// FUNÇÕES DE TOUCH
+// ============================================
+
+/**
+ * Verifica e processa toques na tela
+ */
+void handleTouch() {
+  if (!touchEnabled || touchProcessing) return;
+  int16_t t_x , t_y; 
+  // TFT_eTouch: Método simples e eficaz
+  if (touch.getXY(t_x, t_y)) {
+    // Debounce - evita múltiplos toques
+    if (millis() - lastTouchTime < TOUCH_DEBOUNCE) {
+      return;
+    }
+    
+    // Marca que está processando
+    touchProcessing = true;    
+    
+    // Valida coordenadas
+    if (t_x > tft.width() || t_y > tft.height()) {
+      Serial.printf("⚠️ Touch fora da tela: (%d, %d)\n", t_x, t_y);
+      touchProcessing = false;
+      return;
+    }
+    
+    lastTouchTime = millis();
+    
+    Serial.printf("👆 Touch válido em: (%d, %d)\n", t_x, t_y);
+    
+    // Ação baseada no modo atual
+    if (currentMode == QRCODE_MODE) {
+      // Se está mostrando QR Code, volta para olhos
+      Serial.println("📱 Touch no QR Code - voltando aos olhos...");
+      switchToEyesMode();
+      
+    } else if (currentMode == EYES_MODE) {
+      // Se está mostrando olhos, executa animação confused
+      Serial.println("👀 Touch nos olhos - executando animação confused...");
+      roboEyes.anim_confused();
+    }
+    
+    // Aguarda liberar o toque
+    delay(100);
+    touchProcessing = false;
+  }
+}
+
+// ============================================
 // FUNÇÕES DE ATUALIZAÇÃO DA UI
 // ============================================
 
@@ -514,6 +590,22 @@ void setup() {
                 tft.width(), tft.height(), tft.getRotation());
   Serial.printf("  └─ Heap livre: %d bytes\n", ESP.getFreeHeap());
   
+  // Inicializa Touchscreen TFT_eTouch
+  Serial.println("\n👆 Inicializando Touchscreen (TFT_eTouch)...");
+  
+  // Inicializa touchscreen
+  hSPI.begin(TOUCH_CLK, TOUCH_MISO, TOUCH_MOSI, ETOUCH_CS);
+  touch.init();
+  
+  TFT_eTouchBase::Calibation calibation = { 233, 3785, 3731, 120, 2 };
+  touch.setCalibration(calibation);
+  
+  touchEnabled = true;
+  Serial.println("✅ Touchscreen TFT_eTouch inicializado!");
+  Serial.println("  ├─ Biblioteca: TFT_eTouch (estável)");
+  Serial.println("  ├─ Calibração: Automática");
+  Serial.printf("  └─ Rotação: %d\n", tft.getRotation());
+  
   // Inicializa RoboEyes
   Serial.println("\n👀 Inicializando RoboEyes...");
   roboEyes.setScreenSize(240, 260);
@@ -523,7 +615,7 @@ void setup() {
   //roboEyes.setSpacebetween(10);
   roboEyes.setColors(TFT_BLUE, TFT_BLACK);
   roboEyes.setIdleMode(true, 5, 2);
-  //roboEyes.setCyclops(true);
+  roboEyes.setCyclops(true);
   roboEyes.setCuriosity(true);
   roboEyes.begin();
   roboEyes.setAutoblinker(true, 3, 4);  // Piscar a cada 3 segundos
@@ -546,10 +638,13 @@ void setup() {
 // ============================================
 
 void loop() {
+  // Verifica toques na tela
+  handleTouch();
+  
   // Verifica mensagens UART
   checkUARTMessages();
   
-  // Verifica timeout do QR Code (3 minutos)
+  // Verifica timeout do QR Code (2 minutos)
   checkQRCodeTimeout();
   
   // Auto-clear após timeout
