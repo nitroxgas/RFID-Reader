@@ -235,7 +235,7 @@ class TFT_RoboEyes {
     void update() {
       if (millis() - fpsTimer >= frameInterval) {
         drawEyes();                // draw on the sprite
-        sprite->pushSprite(0, 0);    // push the complete frame in one go
+        sprite->pushSprite(10, 40);    // push the complete frame in one go
         fpsTimer = millis();
       }
     }

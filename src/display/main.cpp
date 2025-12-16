@@ -243,16 +243,16 @@ void createQRCodeScreen() {
   
   // Panel branco para QR Code centralizado
   panel_qr = lv_obj_create(qr_screen);
-  lv_obj_set_size(panel_qr, 220, 220);
-  lv_obj_align(panel_qr, LV_ALIGN_CENTER, 0, -20);
-  lv_obj_set_style_bg_color(panel_qr, lv_color_white(), 0);
+  lv_obj_set_size(panel_qr, 188, 188);
+  lv_obj_align(panel_qr, LV_ALIGN_CENTER, 0, -9);
+  lv_obj_set_style_bg_color(panel_qr, lv_color_black(), 0);
   lv_obj_set_style_bg_opa(panel_qr, 255, 0);
   lv_obj_set_style_border_width(panel_qr, 3, 0);
   lv_obj_set_style_border_color(panel_qr, lv_color_hex(0x2095F6), 0);
   lv_obj_clear_flag(panel_qr, LV_OBJ_FLAG_SCROLLABLE);
   
   // QR Code 200x200
-  qr_code = lv_qrcode_create(panel_qr, 200, lv_color_black(), lv_color_white());
+  qr_code = lv_qrcode_create(panel_qr, 163, lv_color_black(), lv_color_white());
   lv_obj_center(qr_code);
   
   Serial.println("✅ Tela QR Code criada!");
@@ -608,10 +608,10 @@ void setup() {
   
   // Inicializa RoboEyes
   Serial.println("\n👀 Inicializando RoboEyes...");
-  roboEyes.setScreenSize(240, 260);
+  roboEyes.setScreenSize(235, 235);
   roboEyes.setWidth(50,50);
   roboEyes.setHeight(50,50);
-  //roboEyes.setBorderradius(8,8);
+  roboEyes.setBorderradius(5,5);
   //roboEyes.setSpacebetween(10);
   roboEyes.setColors(TFT_BLUE, TFT_BLACK);
   roboEyes.setIdleMode(true, 5, 2);
