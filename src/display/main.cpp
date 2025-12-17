@@ -12,6 +12,9 @@ extern "C" {
   #include "ui/ui.h"
 }
 
+// Imagem do baú de tesouro (RGB888)
+#include "BauTesouro.h"
+
 // Inclui protocolo compartilhado
 #include "../common/protocol.h"
 
@@ -219,6 +222,56 @@ void createTemporaryUI() {
 */
 
 // ============================================
+// DESENHO DO BAÚ DE TESOURO - TFT DIRETO
+// ============================================
+
+/**
+ * Exibe imagem do baú de tesouro diretamente com TFT_eSPI
+ */
+void drawTreasureChest() {
+  Serial.println("🎨 Desenhando baú de tesouro (RGB888->RGB565)...");
+  
+  // CRÍTICO: Garante swap correto para RGB565
+  tft.setSwapBytes(true);
+  
+  // Calcula posição centralizada
+  int16_t x_offset = (tft.width() - BAUTESOURO_WIDTH) / 2;
+  int16_t y_offset = (tft.height() - BAUTESOURO_HEIGHT) / 2;
+  
+  // Buffer para uma linha de pixels em RGB565
+  uint16_t* lineBuffer = (uint16_t*)malloc(BAUTESOURO_WIDTH * sizeof(uint16_t));
+  if (lineBuffer == NULL) {
+    Serial.println("❌ Erro ao alocar buffer para linha!");
+    return;
+  }
+  
+  // Desenha linha por linha
+  for (int y = 0; y < BAUTESOURO_HEIGHT; y++) {
+    // Converte linha de RGB888 para RGB565
+    for (int x = 0; x < BAUTESOURO_WIDTH; x++) {
+      int pixelIndex = y * BAUTESOURO_WIDTH + x;
+      
+      // Lê valor RGB888 de 32-bit (0x00RRGGBB) da PROGMEM
+      uint32_t rgb888 = pgm_read_dword(&BauTesouro[pixelIndex]);
+      
+      // Extrai componentes RGB
+      uint8_t r = (rgb888 >> 16) & 0xFF;
+      uint8_t g = (rgb888 >> 8) & 0xFF;
+      uint8_t b = rgb888 & 0xFF;
+      
+      // Converte para RGB565
+      lineBuffer[x] = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+    }
+    
+    // Envia linha para o display
+    tft.pushImage(x_offset, y_offset + y, BAUTESOURO_WIDTH, 1, lineBuffer);
+  }
+  
+  free(lineBuffer);
+  Serial.println("✅ Baú desenhado com sucesso!");
+}
+
+// ============================================
 // QR CODE - MODO ALTERNATIVO
 // ============================================
 
@@ -264,10 +317,14 @@ void createQRCodeScreen() {
 }
 
 /**
- * Alterna para modo RoboEyes (TEMPORARIAMENTE SEM ROBOEYES)
+ * Alterna para modo RoboEyes
  */
 void switchToEyesMode() {
   Serial.println("👀 Alternando para modo Eyes...");
+  
+  // Garante swap correto para RoboEyes
+  tft.setSwapBytes(true);
+  
   currentMode = EYES_MODE;
   tft.fillScreen(TFT_BLACK);
   // RoboEyes continuará automaticamente no loop
@@ -280,8 +337,20 @@ void switchToEyesMode() {
 void switchToQRCodeMode(const String& url) {
   Serial.println("📱 Alternando para modo QR Code...");
   
-  initializeLVGLIfNeeded();
   currentMode = QRCODE_MODE;
+  
+  // Desenha baú de tesouro com TFT_eSPI (RGB888 -> RGB565)
+  tft.fillScreen(TFT_BLACK);
+  drawTreasureChest();
+  
+  // Aguarda 500ms
+  delay(1000);
+  
+  // Inicializa LVGL para QR Code
+  initializeLVGLIfNeeded();
+  
+  // 📱 Agora exibe o QR Code
+  Serial.println("📱 Exibindo QR Code...");
   
   // Cria tela se não existir
   if (qr_screen == NULL) {
@@ -407,41 +476,7 @@ void showTagInfo(const TagMessage& tag) {
     roboEyes.anim_laugh();
     delay(500); // Aguarda animação
     
-    // Exibe símbolo dourado grande (baú será implementado depois)
-    tft.fillScreen(TFT_BLACK);
-    
-    // Define cores
-    uint16_t goldColor = tft.color565(255, 215, 0);    // Dourado
-    uint16_t darkGold = tft.color565(184, 134, 11);    // Dourado escuro
-    
-    // Desenha ícone de baú estilizado
-    int centerX = tft.width() / 2;
-    int centerY = tft.height() / 2;
-    
-    // Corpo do baú (retângulo principal)
-    tft.fillRoundRect(centerX - 60, centerY - 20, 120, 80, 8, darkGold);
-    tft.drawRoundRect(centerX - 60, centerY - 20, 120, 80, 8, goldColor);
-    
-    // Tampa do baú
-    tft.fillRoundRect(centerX - 65, centerY - 50, 130, 35, 8, goldColor);
-    tft.drawRoundRect(centerX - 65, centerY - 50, 130, 35, 8, darkGold);
-    
-    // Fecho/Trava
-    tft.fillCircle(centerX, centerY + 10, 12, goldColor);
-    tft.fillRect(centerX - 3, centerY + 10, 6, 25, goldColor);
-    
-    // Símbolo $  no centro
-    tft.setTextColor(TFT_BLACK, goldColor);
-    tft.setTextDatum(MC_DATUM);
-    tft.setTextSize(3);
-    tft.drawString("$", centerX, centerY - 25);
-    tft.setTextSize(1);
-    
-    delay(300); // Aguarda 300ms
-    
-    Serial.println("  └─ Exibindo QR Code...");
-    
-    // Alterna para modo QR Code
+    // switchToQRCodeMode irá mostrar baú + QR Code
     switchToQRCodeMode(tag.url);
     
   } else if (tag.type == CONTENT_TEXT && tag.text.length() > 0) {
@@ -621,8 +656,8 @@ void setup() {
   // Inicializa TFT
   Serial.println("  ↓ Inicializando SPI e TFT...");
   tft.init();
-  tft.invertDisplay(true);
-  tft.setRotation(4);    // Portrait 240x320
+  tft.invertDisplay(1);
+  tft.setRotation(4);
   tft.setSwapBytes(true);
   
   // Configura gamma

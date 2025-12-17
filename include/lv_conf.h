@@ -14,7 +14,8 @@
 // CONFIGURAÇÕES BÁSICAS
 // ============================================
 #define LV_COLOR_DEPTH 16
-#define LV_COLOR_16_SWAP 0
+#define LV_COLOR_16_SWAP 1  // SWAP necessário para TFT_eSPI com setSwapBytes(true)
+#define LV_COLOR_SCREEN_TRANSP 1  // Suporte a canal alpha em imagens
 
 // ============================================
 // MEMÓRIA
@@ -23,10 +24,10 @@
 #define LV_MEM_SIZE (64U * 1024U)  // 64KB
 
 // ============================================
-// DISPLAY (LANDSCAPE 320x240)
+// DISPLAY (PORTRAIT 240x320)
 // ============================================
-#define LV_HOR_RES_MAX 320
-#define LV_VER_RES_MAX 240
+#define LV_HOR_RES_MAX 240
+#define LV_VER_RES_MAX 320
 #define LV_DPI_DEF 130
 
 // ============================================
