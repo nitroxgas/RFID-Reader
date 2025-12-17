@@ -7,6 +7,11 @@
 // LVGL para QR Code
 #include <lvgl.h>
 
+// UI do SquareLine Studio (imagens)
+extern "C" {
+  #include "ui/ui.h"
+}
+
 // Inclui protocolo compartilhado
 #include "../common/protocol.h"
 
@@ -365,9 +370,14 @@ void handleTouch() {
       switchToEyesMode();
       
     } else if (currentMode == EYES_MODE) {
-      // Se está mostrando olhos, executa animação confused
+      // Se está mostrando olhos, executa animação confused e muda humor
       Serial.println("👀 Touch nos olhos - executando animação confused...");
       roboEyes.anim_confused();
+      
+      // Muda para um humor aleatório após a animação
+      delay(800); // Aguarda animação confused
+      changeRandomMood();
+      Serial.println("  └─ Humor alterado!");
     }
     
     // Aguarda liberar o toque
@@ -391,6 +401,44 @@ void showTagInfo(const TagMessage& tag) {
   if (tag.type == CONTENT_URL && tag.url.length() > 0) {
     Serial.println("  ├─ Tipo: URL NDEF");
     Serial.println("  ├─ URL: " + tag.url);
+    Serial.println("  └─ Exibindo animação e baú de tesouro...");
+    
+    // Executa animação laugh
+    roboEyes.anim_laugh();
+    delay(500); // Aguarda animação
+    
+    // Exibe símbolo dourado grande (baú será implementado depois)
+    tft.fillScreen(TFT_BLACK);
+    
+    // Define cores
+    uint16_t goldColor = tft.color565(255, 215, 0);    // Dourado
+    uint16_t darkGold = tft.color565(184, 134, 11);    // Dourado escuro
+    
+    // Desenha ícone de baú estilizado
+    int centerX = tft.width() / 2;
+    int centerY = tft.height() / 2;
+    
+    // Corpo do baú (retângulo principal)
+    tft.fillRoundRect(centerX - 60, centerY - 20, 120, 80, 8, darkGold);
+    tft.drawRoundRect(centerX - 60, centerY - 20, 120, 80, 8, goldColor);
+    
+    // Tampa do baú
+    tft.fillRoundRect(centerX - 65, centerY - 50, 130, 35, 8, goldColor);
+    tft.drawRoundRect(centerX - 65, centerY - 50, 130, 35, 8, darkGold);
+    
+    // Fecho/Trava
+    tft.fillCircle(centerX, centerY + 10, 12, goldColor);
+    tft.fillRect(centerX - 3, centerY + 10, 6, 25, goldColor);
+    
+    // Símbolo $  no centro
+    tft.setTextColor(TFT_BLACK, goldColor);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextSize(3);
+    tft.drawString("$", centerX, centerY - 25);
+    tft.setTextSize(1);
+    
+    delay(300); // Aguarda 300ms
+    
     Serial.println("  └─ Exibindo QR Code...");
     
     // Alterna para modo QR Code
@@ -652,14 +700,7 @@ void loop() {
   
   // Atualiza display baseado no modo atual
   if (currentMode == EYES_MODE) {
-    // Muda humor aleatoriamente a cada 1 minuto
-    if (millis() - lastMoodChange >= MOOD_CHANGE_INTERVAL) {
-      changeRandomMood();
-      roboEyes.anim_laugh();
-      lastMoodChange = millis();
-    }
-    
-    // Atualiza animação RoboEyes
+    // Atualiza animação RoboEyes (humor só muda com toque)
     roboEyes.update();
     delay(10);    
   } else if (currentMode == QRCODE_MODE) {
