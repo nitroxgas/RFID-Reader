@@ -486,7 +486,7 @@ void drawGoldenCoin() {
   
   // Calcula posição centralizada
   int16_t x_offset = (tft.width() - MOEDAOURO_WIDTH) / 2;
-  int16_t y_offset = (tft.height() - MOEDAOURO_HEIGHT) / 2;
+  int16_t y_offset = ((tft.height() - MOEDAOURO_HEIGHT) / 2) - 15;
   
   // Buffer para uma linha de pixels em RGB565
   uint16_t* lineBuffer = (uint16_t*)malloc(MOEDAOURO_WIDTH * sizeof(uint16_t));
@@ -529,7 +529,7 @@ void drawLootedMessage() {
   
   // Calcula posição centralizada
   int16_t x_offset = (tft.width() - TESOUROPILHADO_WIDTH) / 2;
-  int16_t y_offset = (tft.height() - TESOUROPILHADO_HEIGHT) / 2;
+  int16_t y_offset = ((tft.height() - TESOUROPILHADO_HEIGHT) / 2) - 10;
   
   // Buffer para uma linha de pixels em RGB565
   uint16_t* lineBuffer = (uint16_t*)malloc(TESOUROPILHADO_WIDTH * sizeof(uint16_t));
@@ -701,30 +701,16 @@ void switchToLootedMode() {
 }
 
 /**
- * Verifica e processa a tag após timeout ou toque
+ * DEPRECATED: Função não mais utilizada - verificação agora é imediata em showTagInfo()
+ * Mantida por compatibilidade, mas não deve ser chamada.
  */
 void checkAndRewardTag() {
-  if (pendingTagUID.length() == 0) return;
+  // Esta função foi substituída pela verificação imediata em showTagInfo()
+  Serial.println("⚠️ checkAndRewardTag() DEPRECATED - verificação já foi feita!");
   
-  Serial.println("\n🔍 Verificando tag...");
-  Serial.println("  ├─ UID: " + pendingTagUID);
-  
-  if (isTagAlreadyRead(pendingTagUID)) {
-    // Tag já foi lida - mensagem de tesouro pilhado
-    Serial.println("  └─ ⚠️ Tag já foi lida anteriormente!");
-    switchToLootedMode();
-  } else {
-    // Tag nova - salva e mostra moeda
-    Serial.println("  ├─ ✅ Tag nova! Salvando...");
-    saveTagAsRead(pendingTagUID);
-    Serial.println("  └─ 🎆 Recompensa: Moeda de Ouro!");
-    switchToCoinMode();
-  }
-  
-  // Limpa flags
+  // Limpa flags para evitar estados inconsistentes
   waitingForTagCheck = false;
   pendingTagUID = "";
-  qrCodeShowTime = 0;
 }
 
 // ============================================
@@ -792,29 +778,38 @@ void handleTouch() {
     
     // Ação baseada no modo atual
     if (currentMode == QRCODE_MODE) {
-      // ⭐ NOVO: Touch durante exibição do tesouro
-      if (waitingForTagCheck) {
-        // Força verificação imediata
-        Serial.println("👆 Touch durante tesouro - verificando tag...");
-        checkAndRewardTag();
-      } else {
-        // Volta para olhos
-        Serial.println("📱 Touch no QR Code - voltando aos olhos...");
-        switchToEyesMode();
-      }
+      // ⭐ MODIFICADO: Touch no QR Code - volta para olhos
+      Serial.println("📱 Touch no QR Code - voltando aos olhos...");
+      switchToEyesMode();
+      waitingForTagCheck = false;  // Limpa flag se houver
       
     } else if (currentMode == COIN_MODE || currentMode == LOOTED_MODE) {
-      // ⭐ NOVO: Touch na moeda ou mensagem - volta aos olhos
-      Serial.println("👆 Touch na recompensa - voltando aos olhos...");
-      switchToEyesMode();
+      // ⭐ MODIFICADO: Touch na moeda ou mensagem - verifica se há QR pendente
+      if (waitingForTagCheck && currentURL.length() > 0) {
+        Serial.println("👆 Touch na recompensa - exibindo QR Code...");
+        switchToQRCodeMode(currentURL);
+        waitingForTagCheck = false;
+      } else {
+        Serial.println("👆 Touch na recompensa - voltando aos olhos...");
+        switchToEyesMode();
+      }
       rewardShowTime = 0;  // Reseta timer
       
     } else if (currentMode == EYES_MODE) {
       // ⭐ NOVO: Se está mostrando mensagem de reset/admin
       if (showingResetMessage) {
-        Serial.println("👆 Touch na mensagem de admin - voltando aos olhos...");
+        // ⭐ MODIFICADO: Verifica se passaram 30 segundos mínimos
+        unsigned long elapsedTime = millis() - adminMessageShowTime;
+        if (elapsedTime < ADMIN_MESSAGE_TIMEOUT) {
+          unsigned long remainingTime = (ADMIN_MESSAGE_TIMEOUT - elapsedTime) / 1000;
+          Serial.printf("⏳ Touch bloqueado! Aguarde %lu segundos...\n", remainingTime);
+          touchProcessing = false;
+          return;
+        }
+        
+        Serial.println("👆 Touch na mensagem de admin (após 30s) - voltando aos olhos...");
         showingResetMessage = false;
-        adminMessageShowTime = 0;  // Reseta timer
+        adminMessageShowTime = 0;
         switchToEyesMode();
         touchProcessing = false;
         return;
@@ -888,13 +883,10 @@ void showTagInfo(const TagMessage& tag) {
       // Reseta contador
       consecutiveAdminReads = 0;
       
-      // Aguarda toque para voltar
-      Serial.println("⏳ Aguardando toque na tela para voltar aos olhos...");
-      
-      // Flag especial para não processar verificação normal
-      waitingForTagCheck = false;
-      pendingTagUID = "";
-      showingResetMessage = true;  // Flag para handleTouch
+      // ⭐ MODIFICADO: Garante mínimo de 30s na tela
+      showingResetMessage = true;
+      adminMessageShowTime = millis();
+      Serial.println("⏳ Aguardando toque (mínimo 30s) para voltar aos olhos...");
       
     } else {
       Serial.println("  └─ Leia mais " + String(3 - consecutiveAdminReads) + "x para resetar");
@@ -921,9 +913,10 @@ void showTagInfo(const TagMessage& tag) {
         "Touch to continue"
       );
       
-      showingResetMessage = true;  // Aguarda toque para voltar
-      adminMessageShowTime = millis();  // Marca tempo de início
-      Serial.println("⏳ Aguardando toque ou 30 segundos para voltar aos olhos...");
+      // ⭐ MODIFICADO: Garante mínimo de 30s na tela
+      showingResetMessage = true;
+      adminMessageShowTime = millis();
+      Serial.println("⏳ Aguardando toque (mínimo 30s) para voltar aos olhos...");
     }
     
     tagPresent = true;
@@ -936,32 +929,51 @@ void showTagInfo(const TagMessage& tag) {
   }
   lastReadUID = tag.uid;
   
-  // Mostra conteúdo baseado no tipo
+  // ⭐ MODIFICADO: Verifica IMEDIATAMENTE se tag já foi lida (antes de mostrar QR code)
+  Serial.println("\n🔍 Verificando tag...");
+  Serial.println("  ├─ UID: " + tag.uid);
+  
+  bool tagAlreadyRead = isTagAlreadyRead(tag.uid);
+  
+  if (tagAlreadyRead) {
+    // Tag já foi lida - mensagem de tesouro pilhado
+    Serial.println("  └─ ⚠️ Tag já foi lida anteriormente!");
+    
+    // Executa animação de confusão
+    roboEyes.anim_confused();
+    delay(500);
+    
+    switchToLootedMode();
+    
+  } else {
+    // Tag nova - salva e mostra moeda
+    Serial.println("  ├─ ✅ Tag nova! Salvando...");
+    saveTagAsRead(tag.uid);
+    Serial.println("  └─ 🎆 Recompensa: Moeda de Ouro!");
+    
+    // Executa animação de felicidade
+    roboEyes.anim_laugh();
+    delay(500);
+    
+    switchToCoinMode();
+  }
+  
+  // ⭐ MODIFICADO: Salva URL para exibir QR Code DEPOIS da recompensa
   if (tag.type == CONTENT_URL && tag.url.length() > 0) {
     Serial.println("  ├─ Tipo: URL NDEF");
     Serial.println("  ├─ URL: " + tag.url);
-    Serial.println("  └─ Exibindo animação e baú de tesouro...");
     
-    // Executa animação laugh
-    roboEyes.anim_laugh();
-    delay(500); // Aguarda animação
-    
-    // switchToQRCodeMode irá mostrar baú + QR Code
-    switchToQRCodeMode(tag.url);
-    
-    // ⭐ NOVO: Registra tag para verificação posterior
-    waitingForTagCheck = true;
-    pendingTagUID = tag.uid;
-    Serial.println("⏳ Aguardando 3 minutos ou toque para verificar tag...");
+    // Registra URL para mostrar após timeout da moeda/mensagem
+    currentURL = tag.url;
+    waitingForTagCheck = true;  // Reutiliza flag para indicar QR pendente
+    Serial.println("  └─ QR Code será exibido após recompensa");
     
   } else if (tag.type == CONTENT_TEXT && tag.text.length() > 0) {
     Serial.println("  ├─ Tipo: Texto");
     Serial.println("  └─ Conteúdo: " + tag.text);
-    // Texto não exibe QR Code, mantém olhos
     
   } else {
     Serial.println("  └─ Tipo: Dados brutos (não-NDEF)");
-    // Dados brutos não exibem QR Code, mantém olhos
   }
   
   tagPresent = true;
@@ -997,20 +1009,14 @@ void updateConnectionStatus(String status) {
  * Verifica timeout do QR Code (3 minutos)
  */
 void checkQRCodeTimeout() {
-  // ⭐ NOVO: Se está aguardando verificação de tag
-  if (waitingForTagCheck && qrCodeShowTime > 0 && 
-      (millis() - qrCodeShowTime >= QR_CODE_TIMEOUT)) {
-    Serial.println("⏰ Timeout de 3 minutos - verificando tag...");
-    checkAndRewardTag();
-    return;
-  }
-  
-  // Se QR Code está visível e passou do timeout (sem verificação pendente)
-  if (currentMode == QRCODE_MODE && qrCodeShowTime > 0 && 
-      (millis() - qrCodeShowTime >= QR_CODE_TIMEOUT) && !waitingForTagCheck) {
-    Serial.println("⏰ Timeout: Retornando para RoboEyes após 3 minutos");
-    switchToEyesMode();
-    qrCodeShowTime = 0;
+  // ⭐ MODIFICADO: QR Code agora é exibido APÓS a recompensa, sem verificação pendente
+  if (currentMode == QRCODE_MODE && qrCodeShowTime > 0) {
+    if (millis() - qrCodeShowTime >= QR_CODE_TIMEOUT) {
+      Serial.println("⏰ Timeout do QR Code (3 min) - voltando aos olhos");
+      switchToEyesMode();
+      qrCodeShowTime = 0;
+      waitingForTagCheck = false;  // Limpa qualquer flag pendente
+    }
   }
 }
 
@@ -1021,8 +1027,18 @@ void checkRewardTimeout() {
   if ((currentMode == COIN_MODE || currentMode == LOOTED_MODE) && rewardShowTime > 0) {
     // Verifica timeout de 1 minuto
     if (millis() - rewardShowTime >= REWARD_TIMEOUT) {
-      Serial.println("⏰ Timeout de recompensa - voltando aos olhos");
-      switchToEyesMode();
+      Serial.println("⏰ Timeout de recompensa (1 min)");
+      
+      // ⭐ MODIFICADO: Verifica se há QR Code pendente para exibir
+      if (waitingForTagCheck && currentURL.length() > 0) {
+        Serial.println("  └─ Exibindo QR Code após recompensa...");
+        switchToQRCodeMode(currentURL);
+        waitingForTagCheck = false;  // QR code já foi exibido
+      } else {
+        Serial.println("  └─ Voltando aos olhos");
+        switchToEyesMode();
+      }
+      
       rewardShowTime = 0;
     }
   }
