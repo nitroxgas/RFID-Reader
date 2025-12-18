@@ -3,6 +3,10 @@
 #include "RoboEyesTFT_eSPI.h"
 #include <TFT_eTouch.h>
 #include <SPI.h>
+#include <Preferences.h>
+#include <nvs_flash.h>  // Para inicializar NVS
+#include <FS.h>
+#include <SD.h>
 
 // LVGL para QR Code
 #include <lvgl.h>
@@ -12,8 +16,10 @@ extern "C" {
   #include "ui/ui.h"
 }
 
-// Imagem do baú de tesouro (RGB888)
+// Imagens (RGB888)
 #include "BauTesouro.h"
+#include "MoedaOuro.h"
+#include "TesouroJaPilhado.h"
 
 // Inclui protocolo compartilhado
 #include "../common/protocol.h"
@@ -63,7 +69,9 @@ static lv_color_t *buf2 = NULL;
 // Display Mode States
 enum DisplayMode {
   EYES_MODE,
-  QRCODE_MODE
+  QRCODE_MODE,
+  COIN_MODE,        // ⭐ NOVO: Moeda de ouro
+  LOOTED_MODE       // ⭐ NOVO: Tesouro já pilhado
 };
 
 DisplayMode currentMode = EYES_MODE;
@@ -81,7 +89,27 @@ lv_obj_t *qr_code = NULL;
 lv_obj_t *panel_qr = NULL;
 lv_obj_t *qr_screen = NULL;
 unsigned long qrCodeShowTime = 0;
-const unsigned long QR_CODE_TIMEOUT = 120000;  // 2 minutos em ms
+const unsigned long QR_CODE_TIMEOUT = 180000;  // 3 minutos em ms
+
+// ⭐ NOVO: Variáveis de controle do fluxo de verificação
+const unsigned long REWARD_TIMEOUT = 60000;      // 1 minuto para moeda/mensagem
+bool waitingForTagCheck = false;                 // Flag para verificação pendente
+String pendingTagUID = "";	                       // UID da tag sendo verificada
+unsigned long rewardShowTime = 0;                // Tempo de início da recompensa
+
+// ⭐ NOVO: Preferences para armazenamento persistente
+Preferences prefs;
+const char* PREFS_NAMESPACE = "rfid_tags";
+const char* PREFS_COUNT_KEY = "count";
+const char* PREFS_TAG_PREFIX = "tag_";
+
+// ⭐ NOVO: Tag especial para admin/debug
+const String ADMIN_TAG_UID = "0431430F320289";
+int consecutiveAdminReads = 0;
+String lastReadUID = "";
+bool showingResetMessage = false;
+unsigned long adminMessageShowTime = 0;         // Tempo de início da mensagem de admin
+const unsigned long ADMIN_MESSAGE_TIMEOUT = 30000; // 30 segundos para mensagem de admin
 
 // Mood change variables
 unsigned long lastMoodChange = 0;
@@ -272,6 +300,277 @@ void drawTreasureChest() {
 }
 
 // ============================================
+// SISTEMA DE ARMAZENAMENTO NVS (PREFERENCES)
+// ============================================
+
+/**
+ * Verifica se uma tag já foi lida anteriormente
+ */
+bool isTagAlreadyRead(String uid) {
+  prefs.begin(PREFS_NAMESPACE, true); // read-only
+  int count = prefs.getInt(PREFS_COUNT_KEY, 0);
+  
+  for (int i = 0; i < count; i++) {
+    String key = String(PREFS_TAG_PREFIX) + String(i);
+    String storedUID = prefs.getString(key.c_str(), "");
+    if (storedUID == uid) {
+      prefs.end();
+      return true; // Tag já existe
+    }
+  }
+  
+  prefs.end();
+  return false; // Tag nova
+}
+
+/**
+ * Salva uma tag como lida
+ */
+void saveTagAsRead(String uid) {
+  prefs.begin(PREFS_NAMESPACE, false); // read-write
+  
+  int count = prefs.getInt(PREFS_COUNT_KEY, 0);
+  String key = String(PREFS_TAG_PREFIX) + String(count);
+  
+  prefs.putString(key.c_str(), uid);
+  prefs.putInt(PREFS_COUNT_KEY, count + 1);
+  
+  prefs.end();
+  
+  Serial.printf("✅ Tag salva! Total de tags lidas: %d\n", count + 1);
+}
+
+/**
+ * Retorna quantidade de tags lidas
+ */
+int getReadTagsCount() {
+  prefs.begin(PREFS_NAMESPACE, true);
+  int count = prefs.getInt(PREFS_COUNT_KEY, 0);
+  prefs.end();
+  return count;
+}
+
+/**
+ * Limpa todas as tags armazenadas (opcional, para debug)
+ */
+void clearAllTags() {
+  prefs.begin(PREFS_NAMESPACE, false);
+  prefs.clear();
+  prefs.end();
+  Serial.println("⚠️ Todas as tags foram apagadas!");
+}
+
+/**
+ * Lista todas as tags armazenadas via Serial
+ */
+void listAllTags() {
+  Serial.println("\n📊 ========== LISTA DE TAGS LIDAS ===========");
+  
+  prefs.begin(PREFS_NAMESPACE, true); // read-only
+  int count = prefs.getInt(PREFS_COUNT_KEY, 0);
+  
+  Serial.printf("📊 Total de tags armazenadas: %d\n\n", count);
+  
+  if (count == 0) {
+    Serial.println("⚠️ Nenhuma tag armazenada ainda.");
+  } else {
+    Serial.println("├───┬──────────────────────────");
+    Serial.println("│ # │ UID                  │");
+    Serial.println("├───┼──────────────────────────");
+    
+    for (int i = 0; i < count; i++) {
+      String key = String(PREFS_TAG_PREFIX) + String(i);
+      String uid = prefs.getString(key.c_str(), "N/A");
+      Serial.printf("│%3d│ %-20s│\n", i+1, uid.c_str());
+    }
+    
+    Serial.println("└───┴──────────────────────────");
+  }
+  
+  prefs.end();
+  Serial.println("📊 =========================================\n");
+}
+
+/**
+ * Faz backup das tags para arquivo no SD Card
+ * Retorna true se sucesso, false se falha
+ */
+bool backupTagsToSD() {
+  Serial.println("\n💾 Iniciando backup de tags para SD Card...");
+  
+  // Inicializa SD Card se não estiver inicializado
+  if (!SD.begin(SDSPI_CS, hSPI)) {
+    Serial.println("❌ Erro: SD Card não detectado!");
+    return false;
+  }
+  
+  // Lê tags da NVS
+  prefs.begin(PREFS_NAMESPACE, true);
+  int count = prefs.getInt(PREFS_COUNT_KEY, 0);
+  
+  if (count == 0) {
+    Serial.println("⚠️ Nenhuma tag para fazer backup.");
+    prefs.end();
+    return false;
+  }
+  
+  // Cria nome de arquivo com timestamp
+  String filename = "/rfid_backup_" + String(millis()) + ".txt";
+  
+  File file = SD.open(filename.c_str(), FILE_WRITE);
+  if (!file) {
+    Serial.println("❌ Erro ao criar arquivo de backup!");
+    prefs.end();
+    return false;
+  }
+  
+  // Escreve header
+  file.println("========================================");
+  file.println("RFID TAGS BACKUP");
+  file.println("Sistema: ESP32 RFID Reader Display CYD");
+  file.printf("Data: %lu ms\n", millis());
+  file.printf("Total de tags: %d\n", count);
+  file.println("========================================\n");
+  
+  // Escreve cada tag
+  for (int i = 0; i < count; i++) {
+    String key = String(PREFS_TAG_PREFIX) + String(i);
+    String uid = prefs.getString(key.c_str(), "N/A");
+    file.printf("%d,%s\n", i+1, uid.c_str());
+  }
+  
+  file.println("\n========================================");
+  file.println("FIM DO BACKUP");
+  file.println("========================================");
+  
+  file.close();
+  prefs.end();
+  
+  Serial.printf("✅ Backup criado com sucesso!\n");
+  Serial.printf("📁 Arquivo: %s\n", filename.c_str());
+  Serial.printf("📊 %d tags salvas\n\n", count);
+  
+  return true;
+}
+
+/**
+ * Exibe mensagem simples na tela (sem imagens)
+ */
+void showSimpleMessage(const char* line1, const char* line2 = nullptr, 
+                       const char* line3 = nullptr, const char* line4 = nullptr) {
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setTextSize(2);
+  tft.setTextDatum(MC_DATUM);
+  
+  int y = 80;
+  int lineSpacing = 30;
+  
+  if (line1) tft.drawString(line1, tft.width()/2, y);
+  if (line2) tft.drawString(line2, tft.width()/2, y + lineSpacing);
+  if (line3) tft.drawString(line3, tft.width()/2, y + lineSpacing*2);
+  if (line4) tft.drawString(line4, tft.width()/2, y + lineSpacing*3);
+}
+
+// ============================================
+// DESENHO DA MOEDA DE OURO
+// ============================================
+
+/**
+ * Exibe imagem da moeda de ouro diretamente com TFT_eSPI
+ */
+void drawGoldenCoin() {
+  Serial.println("🪙 Desenhando moeda de ouro (RGB888->RGB565)...");
+  
+  tft.setSwapBytes(true);
+  
+  // Calcula posição centralizada
+  int16_t x_offset = (tft.width() - MOEDAOURO_WIDTH) / 2;
+  int16_t y_offset = (tft.height() - MOEDAOURO_HEIGHT) / 2;
+  
+  // Buffer para uma linha de pixels em RGB565
+  uint16_t* lineBuffer = (uint16_t*)malloc(MOEDAOURO_WIDTH * sizeof(uint16_t));
+  if (lineBuffer == NULL) {
+    Serial.println("❌ Erro ao alocar buffer para linha!");
+    return;
+  }
+  
+  // Desenha linha por linha
+  for (int y = 0; y < MOEDAOURO_HEIGHT; y++) {
+    for (int x = 0; x < MOEDAOURO_WIDTH; x++) {
+      int pixelIndex = y * MOEDAOURO_WIDTH + x;
+      uint32_t rgb888 = pgm_read_dword(&MoedaOuro[pixelIndex]);
+      
+      uint8_t r = (rgb888 >> 16) & 0xFF;
+      uint8_t g = (rgb888 >> 8) & 0xFF;
+      uint8_t b = rgb888 & 0xFF;
+      
+      lineBuffer[x] = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+    }
+    
+    tft.pushImage(x_offset, y_offset + y, MOEDAOURO_WIDTH, 1, lineBuffer);
+  }
+  
+  free(lineBuffer);
+  Serial.println("✅ Moeda de ouro desenhada com sucesso!");
+}
+
+// ============================================
+// DESENHO DA MENSAGEM "TESOURO JÁ PILHADO"
+// ============================================
+
+/**
+ * Exibe imagem de tesouro já pilhado com TFT_eSPI
+ */
+void drawLootedMessage() {
+  Serial.println("☠️ Desenhando mensagem de tesouro pilhado (RGB888->RGB565)...");
+  
+  tft.setSwapBytes(true);
+  
+  // Calcula posição centralizada
+  int16_t x_offset = (tft.width() - TESOUROPILHADO_WIDTH) / 2;
+  int16_t y_offset = (tft.height() - TESOUROPILHADO_HEIGHT) / 2;
+  
+  // Buffer para uma linha de pixels em RGB565
+  uint16_t* lineBuffer = (uint16_t*)malloc(TESOUROPILHADO_WIDTH * sizeof(uint16_t));
+  if (lineBuffer == NULL) {
+    Serial.println("❌ Erro ao alocar buffer para linha!");
+    return;
+  }
+  
+  // Desenha linha por linha
+  for (int y = 0; y < TESOUROPILHADO_HEIGHT; y++) {
+    for (int x = 0; x < TESOUROPILHADO_WIDTH; x++) {
+      int pixelIndex = y * TESOUROPILHADO_WIDTH + x;
+      uint32_t rgb888 = pgm_read_dword(&TesouroJaPilhado[pixelIndex]);
+      
+      uint8_t r = (rgb888 >> 16) & 0xFF;
+      uint8_t g = (rgb888 >> 8) & 0xFF;
+      uint8_t b = rgb888 & 0xFF;
+      
+      lineBuffer[x] = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+    }
+    
+    tft.pushImage(x_offset, y_offset + y, TESOUROPILHADO_WIDTH, 1, lineBuffer);
+  }
+  
+  free(lineBuffer);
+  Serial.println("✅ Mensagem de tesouro pilhado desenhada com sucesso!");
+  
+  // Adiciona texto sobre a imagem
+  /* tft.setTextColor(TFT_RED, TFT_BLACK);
+  tft.setTextSize(2);
+  tft.setTextDatum(MC_DATUM);
+  tft.drawString("AhhhhRRR!", tft.width()/2, 40);
+  tft.setTextSize(1);
+  tft.drawString("Voce esta tentando", tft.width()/2, 70);
+  tft.drawString("pilhar o tesouro", tft.width()/2, 85);
+  tft.drawString("novamente?", tft.width()/2, 100);
+  tft.drawString("Contente-se com", tft.width()/2, 120);
+  tft.drawString("seu quinhao!", tft.width()/2, 135); */
+}
+
+// ============================================
 // QR CODE - MODO ALTERNATIVO
 // ============================================
 
@@ -369,6 +668,65 @@ void switchToQRCodeMode(const String& url) {
   Serial.println("✅ QR Code exibido (timeout: 3 min)");
 }
 
+/**
+ * Alterna para modo Moeda de Ouro
+ */
+void switchToCoinMode() {
+  Serial.println("🪙 Alternando para modo Moeda de Ouro...");
+  
+  currentMode = COIN_MODE;
+  tft.fillScreen(TFT_BLACK);
+  drawGoldenCoin();
+  
+  // Registra tempo de início
+  rewardShowTime = millis();
+  
+  Serial.println("✅ Moeda de ouro exibida (timeout: 1 min)");
+}
+
+/**
+ * Alterna para modo Tesouro Já Pilhado
+ */
+void switchToLootedMode() {
+  Serial.println("☠️ Alternando para modo Tesouro Já Pilhado...");
+  
+  currentMode = LOOTED_MODE;
+  tft.fillScreen(TFT_BLACK);
+  drawLootedMessage();
+  
+  // Registra tempo de início
+  rewardShowTime = millis();
+  
+  Serial.println("✅ Mensagem de tesouro pilhado exibida (timeout: 1 min)");
+}
+
+/**
+ * Verifica e processa a tag após timeout ou toque
+ */
+void checkAndRewardTag() {
+  if (pendingTagUID.length() == 0) return;
+  
+  Serial.println("\n🔍 Verificando tag...");
+  Serial.println("  ├─ UID: " + pendingTagUID);
+  
+  if (isTagAlreadyRead(pendingTagUID)) {
+    // Tag já foi lida - mensagem de tesouro pilhado
+    Serial.println("  └─ ⚠️ Tag já foi lida anteriormente!");
+    switchToLootedMode();
+  } else {
+    // Tag nova - salva e mostra moeda
+    Serial.println("  ├─ ✅ Tag nova! Salvando...");
+    saveTagAsRead(pendingTagUID);
+    Serial.println("  └─ 🎆 Recompensa: Moeda de Ouro!");
+    switchToCoinMode();
+  }
+  
+  // Limpa flags
+  waitingForTagCheck = false;
+  pendingTagUID = "";
+  qrCodeShowTime = 0;
+}
+
 // ============================================
 // FUNÇÕES DE MUDANÇA DE HUMOR
 // ============================================
@@ -434,11 +792,34 @@ void handleTouch() {
     
     // Ação baseada no modo atual
     if (currentMode == QRCODE_MODE) {
-      // Se está mostrando QR Code, volta para olhos
-      Serial.println("📱 Touch no QR Code - voltando aos olhos...");
+      // ⭐ NOVO: Touch durante exibição do tesouro
+      if (waitingForTagCheck) {
+        // Força verificação imediata
+        Serial.println("👆 Touch durante tesouro - verificando tag...");
+        checkAndRewardTag();
+      } else {
+        // Volta para olhos
+        Serial.println("📱 Touch no QR Code - voltando aos olhos...");
+        switchToEyesMode();
+      }
+      
+    } else if (currentMode == COIN_MODE || currentMode == LOOTED_MODE) {
+      // ⭐ NOVO: Touch na moeda ou mensagem - volta aos olhos
+      Serial.println("👆 Touch na recompensa - voltando aos olhos...");
       switchToEyesMode();
+      rewardShowTime = 0;  // Reseta timer
       
     } else if (currentMode == EYES_MODE) {
+      // ⭐ NOVO: Se está mostrando mensagem de reset/admin
+      if (showingResetMessage) {
+        Serial.println("👆 Touch na mensagem de admin - voltando aos olhos...");
+        showingResetMessage = false;
+        adminMessageShowTime = 0;  // Reseta timer
+        switchToEyesMode();
+        touchProcessing = false;
+        return;
+      }
+      
       // Se está mostrando olhos, executa animação confused e muda humor
       Serial.println("👀 Touch nos olhos - executando animação confused...");
       roboEyes.anim_confused();
@@ -466,6 +847,95 @@ void showTagInfo(const TagMessage& tag) {
   Serial.println("📱 Tag detectada!");
   Serial.println("  ├─ UID: " + tag.uid);
   
+  // ⭐ NOVO: Verifica se é a tag especial de admin
+  if (tag.uid == ADMIN_TAG_UID) {
+    Serial.println("  ├─ 🔑 TAG ADMIN DETECTADA!");
+    
+    // Verifica se é leitura consecutiva
+    if (lastReadUID == ADMIN_TAG_UID) {
+      consecutiveAdminReads++;
+      Serial.printf("  ├─ Leituras consecutivas: %d/3\n", consecutiveAdminReads);
+    } else {
+      consecutiveAdminReads = 1;
+      Serial.println("  ├─ Primeira leitura admin");
+    }
+    
+    lastReadUID = tag.uid;
+    
+    // a) Sempre lista as tags no console
+    Serial.println("  ├─ Listando tags armazenadas...");
+    listAllTags();
+    
+    // b) Se 3 leituras consecutivas: backup, limpa e mostra mensagem
+    if (consecutiveAdminReads >= 3) {
+      Serial.println("  └─ ⚠️ 3 LEITURAS CONSECUTIVAS - INICIANDO RESET!");
+      Serial.println();
+      
+      // Faz backup
+      bool backupOk = backupTagsToSD();
+      
+      // Limpa a tabela principal
+      clearAllTags();
+      
+      // Exibe mensagem na tela
+      showSimpleMessage(
+        "LISTA ZERADA",
+        backupOk ? "Backup: OK" : "Backup: FALHOU",
+        "Tags apagadas",
+        "Toque para voltar"
+      );
+      
+      // Reseta contador
+      consecutiveAdminReads = 0;
+      
+      // Aguarda toque para voltar
+      Serial.println("⏳ Aguardando toque na tela para voltar aos olhos...");
+      
+      // Flag especial para não processar verificação normal
+      waitingForTagCheck = false;
+      pendingTagUID = "";
+      showingResetMessage = true;  // Flag para handleTouch
+      
+    } else {
+      Serial.println("  └─ Leia mais " + String(3 - consecutiveAdminReads) + "x para resetar");
+      
+      // Executa animação
+      roboEyes.anim_laugh();
+      delay(500);
+      
+      // ⭐ NOVO: Mostra mensagem visual na tela
+      prefs.begin(PREFS_NAMESPACE, true); // read-only
+      int tagsCount = prefs.getInt(PREFS_COUNT_KEY, 0);
+      prefs.end();
+      
+      int timesToClear = 3 - consecutiveAdminReads;
+      
+      // Cria strings temporárias para conversão
+      String line2 = String(tagsCount) + " tags detected";
+      String line3 = String(timesToClear) + "x times to clear";
+      
+      showSimpleMessage(
+        "Ye Captain!",
+        line2.c_str(),
+        line3.c_str(),
+        "Touch to continue"
+      );
+      
+      showingResetMessage = true;  // Aguarda toque para voltar
+      adminMessageShowTime = millis();  // Marca tempo de início
+      Serial.println("⏳ Aguardando toque ou 30 segundos para voltar aos olhos...");
+    }
+    
+    tagPresent = true;
+    return; // Não processa o resto
+  }
+  
+  // Se não é tag admin, reseta contador de admin
+  if (lastReadUID == ADMIN_TAG_UID) {
+    consecutiveAdminReads = 0;
+  }
+  lastReadUID = tag.uid;
+  
   // Mostra conteúdo baseado no tipo
   if (tag.type == CONTENT_URL && tag.url.length() > 0) {
     Serial.println("  ├─ Tipo: URL NDEF");
@@ -478,6 +948,11 @@ void showTagInfo(const TagMessage& tag) {
     
     // switchToQRCodeMode irá mostrar baú + QR Code
     switchToQRCodeMode(tag.url);
+    
+    // ⭐ NOVO: Registra tag para verificação posterior
+    waitingForTagCheck = true;
+    pendingTagUID = tag.uid;
+    Serial.println("⏳ Aguardando 3 minutos ou toque para verificar tag...");
     
   } else if (tag.type == CONTENT_TEXT && tag.text.length() > 0) {
     Serial.println("  ├─ Tipo: Texto");
@@ -522,12 +997,49 @@ void updateConnectionStatus(String status) {
  * Verifica timeout do QR Code (3 minutos)
  */
 void checkQRCodeTimeout() {
-  // Se QR Code está visível e passou do timeout
-  if (currentMode == QRCODE_MODE && qrCodeShowTime > 0 && 
+  // ⭐ NOVO: Se está aguardando verificação de tag
+  if (waitingForTagCheck && qrCodeShowTime > 0 && 
       (millis() - qrCodeShowTime >= QR_CODE_TIMEOUT)) {
+    Serial.println("⏰ Timeout de 3 minutos - verificando tag...");
+    checkAndRewardTag();
+    return;
+  }
+  
+  // Se QR Code está visível e passou do timeout (sem verificação pendente)
+  if (currentMode == QRCODE_MODE && qrCodeShowTime > 0 && 
+      (millis() - qrCodeShowTime >= QR_CODE_TIMEOUT) && !waitingForTagCheck) {
     Serial.println("⏰ Timeout: Retornando para RoboEyes após 3 minutos");
     switchToEyesMode();
     qrCodeShowTime = 0;
+  }
+}
+
+/**
+ * Verifica timeout da recompensa (moeda/mensagem - 1 minuto)
+ */
+void checkRewardTimeout() {
+  if ((currentMode == COIN_MODE || currentMode == LOOTED_MODE) && rewardShowTime > 0) {
+    // Verifica timeout de 1 minuto
+    if (millis() - rewardShowTime >= REWARD_TIMEOUT) {
+      Serial.println("⏰ Timeout de recompensa - voltando aos olhos");
+      switchToEyesMode();
+      rewardShowTime = 0;
+    }
+  }
+}
+
+/**
+ * ⭐ NOVO: Verifica timeout da mensagem de admin (30 segundos)
+ */
+void checkAdminMessageTimeout() {
+  if (showingResetMessage && adminMessageShowTime > 0) {
+    // Verifica timeout de 30 segundos
+    if (millis() - adminMessageShowTime >= ADMIN_MESSAGE_TIMEOUT) {
+      Serial.println("⏰ Timeout de mensagem admin - voltando aos olhos");
+      showingResetMessage = false;
+      adminMessageShowTime = 0;
+      switchToEyesMode();
+    }
   }
 }
 
@@ -657,7 +1169,8 @@ void setup() {
   Serial.println("  ↓ Inicializando SPI e TFT...");
   tft.init();
   tft.invertDisplay(1);
-  tft.setRotation(4);
+  tft.setRotation(2);  // Mudado de 4 para 1 para remover espelhamento
+  
   tft.setSwapBytes(true);
   
   // Configura gamma
@@ -711,6 +1224,31 @@ void setup() {
   changeRandomMood();
   lastMoodChange = millis();
   
+  // ⭐ NOVO: Inicializa sistema de armazenamento
+  Serial.println("\n💾 Inicializando sistema de armazenamento (NVS)...");
+  
+  // Inicializa NVS Flash (CRÍTICO!)
+  esp_err_t err = nvs_flash_init();
+  if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+    // NVS partition was truncated and needs to be erased
+    Serial.println("⚠️ NVS precisa ser apagado, reinicializando...");
+    ESP_ERROR_CHECK(nvs_flash_erase());
+    err = nvs_flash_init();
+  }
+  ESP_ERROR_CHECK(err);
+  Serial.println("✅ NVS Flash inicializado!");
+  
+  prefs.begin(PREFS_NAMESPACE, true); // read-only para checar
+  int tagsCount = prefs.getInt(PREFS_COUNT_KEY, 0);
+  prefs.end();
+  
+  Serial.printf("✅ Sistema de armazenamento pronto!\n");
+  Serial.printf("📊 Total de tags lidas anteriormente: %d\n", tagsCount);
+  
+  // ⭐ DEBUG: Descomentar para limpar todas as tags
+  // clearAllTags();
+  // Serial.println("⚠️ Todas as tags foram limpas!");
+  
   Serial.println("\n✅ Sistema pronto!");
   Serial.println("⏳ Aguardando dados do Reader via UART...\n");
 }
@@ -727,8 +1265,14 @@ void loop() {
   // Verifica mensagens UART
   checkUARTMessages();
   
-  // Verifica timeout do QR Code (2 minutos)
+  // Verifica timeout do QR Code (3 minutos)
   checkQRCodeTimeout();
+  
+  // ⭐ NOVO: Verifica timeout da recompensa (1 minuto)
+  checkRewardTimeout();
+  
+  // ⭐ NOVO: Verifica timeout da mensagem de admin (30 segundos)
+  checkAdminMessageTimeout();
   
   // Auto-clear após timeout
   checkAutoClear();
@@ -743,5 +1287,8 @@ void loop() {
     lv_timer_handler();
     lv_tick_inc(5);
     delay(5);
+  } else if (currentMode == COIN_MODE || currentMode == LOOTED_MODE) {
+    // ⭐ NOVO: Modos estáticos - não precisa atualizar
+    delay(50);
   }
 }
